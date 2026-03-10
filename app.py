@@ -170,22 +170,38 @@ async def verify_pin(body: VerifyPinBody):
 
 class JoinBody(BaseModel):
     room_id: str
-    user_id: str
     pin: str
+    user_id: str | None = None  # existing user hint
 
 
 @app.post("/api/room/join")
 async def join_room(body: JoinBody):
-    if body.user_id not in ("a", "b"):
-        raise HTTPException(status_code=400, detail="user_id must be 'a' or 'b'")
     async with aiosqlite.connect(DB_PATH) as db:
         await _check_pin(db, body.room_id, body.pin)
+        async with db.execute(
+            "SELECT user_id FROM presence WHERE room_id = ?", (body.room_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+        present = [r[0] for r in rows]
+
+        # If caller already has a slot, reuse it
+        if body.user_id and body.user_id in present:
+            return {"ok": True, "user_id": body.user_id}
+
+        # Assign next available slot
+        if "a" not in present:
+            new_uid = "a"
+        elif "b" not in present:
+            new_uid = "b"
+        else:
+            raise HTTPException(status_code=409, detail="Room is full")
+
         await db.execute(
-            "INSERT OR IGNORE INTO presence (room_id, user_id) VALUES (?, ?)",
-            (body.room_id, body.user_id)
+            "INSERT INTO presence (room_id, user_id) VALUES (?, ?)",
+            (body.room_id, new_uid)
         )
         await db.commit()
-    return {"ok": True}
+    return {"ok": True, "user_id": new_uid}
 
 
 # ── Room status ───────────────────────────────────────────────────────────────

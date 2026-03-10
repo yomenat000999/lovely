@@ -421,14 +421,21 @@ async function handlePinSubmit() {
     }
   }
 
-  // PIN accepted — register presence
-  userPin = pin;
-  localStorage.setItem('lp_pin_' + roomId, pin);
-  await fetch('/api/room/join', {
+  // PIN accepted — register presence, server assigns user_id
+  const joinRes = await fetch('/api/room/join', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ room_id: roomId, user_id: userId, pin })
+    body: JSON.stringify({ room_id: roomId, pin, user_id: userId })
   });
+  if (!joinRes.ok) {
+    errEl.textContent = 'Room is full (max 2 people).';
+    return;
+  }
+  const joinData = await joinRes.json();
+  userId = joinData.user_id;
+  userPin = pin;
+  localStorage.setItem('lp_uid_' + roomId, userId);
+  localStorage.setItem('lp_pin_' + roomId, pin);
   showMain();
   startMain();
 }
@@ -529,14 +536,8 @@ async function init() {
     return;
   }
 
-  // Restore or assign user_id
-  const storageKey = 'lp_uid_' + roomId;
-  userId = localStorage.getItem(storageKey);
-  if (!userId) {
-    const r = await fetch('/api/room/' + roomId).then(r => r.json());
-    userId = r.slots.includes('a') ? 'b' : 'a';
-    localStorage.setItem(storageKey, userId);
-  }
+  // user_id is assigned server-side during join, not here
+  userId = localStorage.getItem('lp_uid_' + roomId);
 
   // Register service worker
   if ('serviceWorker' in navigator) {
@@ -550,24 +551,23 @@ async function init() {
   if (savedPin) {
     const hasPinRes = await fetch('/api/room/' + roomId + '/has-pin').then(r => r.json());
     if (hasPinRes.has_pin) {
-      const verify = await fetch('/api/room/verify-pin', {
+      const joinRes = await fetch('/api/room/join', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ room_id: roomId, pin: savedPin })
+        body: JSON.stringify({ room_id: roomId, pin: savedPin, user_id: userId })
       });
-      if (verify.ok) {
+      if (joinRes.ok) {
+        const data = await joinRes.json();
+        userId = data.user_id;
+        localStorage.setItem('lp_uid_' + roomId, userId);
         userPin = savedPin;
-        await fetch('/api/room/join', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ room_id: roomId, user_id: userId, pin: savedPin })
-        });
         showMain();
         startMain();
         return;
       }
     }
     localStorage.removeItem('lp_pin_' + roomId);
+    localStorage.removeItem('lp_uid_' + roomId);
   }
 
   // Show PIN screen with appropriate text
