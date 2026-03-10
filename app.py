@@ -288,6 +288,12 @@ async def send_message(body: MessageBody):
         room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
         if not room or room["pin"] != body.pin:
             raise HTTPException(status_code=403, detail="Wrong PIN")
+        already = await conn.fetchrow(
+            "SELECT 1 FROM messages WHERE room_id=$1 AND sender_id=$2",
+            body.room_id, body.user_id
+        )
+        if already:
+            raise HTTPException(status_code=409, detail="Already sent your message")
         await conn.execute(
             "INSERT INTO messages(room_id, sender_id, content) VALUES($1, $2, $3)",
             body.room_id, body.user_id, content

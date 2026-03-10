@@ -617,14 +617,14 @@ async function pollStatus() {
     // debug
     document.getElementById('dbg').textContent = `me:${userId} present:[${(r.slots||[]).join(',')}] count:${r.count}`;
 
-    // message unlock progress
-    const totalTaps = Object.values(r.taps || {}).reduce((a, b) => a + b, 0);
-    const pct = Math.min(totalTaps / 20 * 100, 100);
+    // message unlock progress — based on MY own taps reaching 100
+    const myTaps = (r.taps && r.taps[userId]) || 0;
+    const pct = Math.min(myTaps / 100 * 100, 100);
     document.getElementById('msg-progress-fill').style.width = pct + '%';
     document.getElementById('msg-lock-text').textContent =
-      totalTaps >= 20 ? 'unlocked 💌' : `leave a message — ${totalTaps}/20 💗`;
+      myTaps >= 100 ? 'unlocked 💌' : `leave a message — ${myTaps}/100 💗`;
 
-    if (totalTaps >= 20 && !msgUnlocked) {
+    if (myTaps >= 100 && !msgUnlocked) {
       msgUnlocked = true;
       const sec = document.getElementById('msg-section');
       document.getElementById('msg-lock').style.display = 'none';
@@ -653,6 +653,17 @@ async function loadMessages() {
       list.appendChild(div);
     }
     if (wasAtBottom || r.messages.length <= 1) list.scrollTop = list.scrollHeight;
+
+    // Disable compose if I already sent my one message
+    const alreadySent = r.messages.some(m => m.sender === userId);
+    const input = document.getElementById('msg-input');
+    const sendBtn = document.getElementById('msg-send');
+    if (alreadySent) {
+      input.disabled = true;
+      input.placeholder = 'message sent 💌';
+      sendBtn.disabled = true;
+      sendBtn.style.opacity = '0.4';
+    }
   } catch(e) {}
 }
 
