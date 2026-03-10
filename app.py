@@ -40,6 +40,13 @@ self.addEventListener('notificationclick', function(event) {
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS rooms (
+                room_id    TEXT PRIMARY KEY,
+                pin        TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 room_id      TEXT NOT NULL,
                 user_id      TEXT NOT NULL,
@@ -80,15 +87,84 @@ async def vapid_public_key():
     return Response(content=VAPID_PUBLIC_KEY, media_type="text/plain")
 
 
+# ── PIN helpers ──────────────────────────────────────────────────────────────
+
+class SetPinBody(BaseModel):
+    room_id: str
+    pin: str
+
+
+class VerifyPinBody(BaseModel):
+    room_id: str
+    pin: str
+
+
+@app.get("/api/room/{room_id}/has-pin")
+async def has_pin(room_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT 1 FROM rooms WHERE room_id = ?", (room_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    return {"has_pin": row is not None}
+
+
+@app.post("/api/room/set-pin")
+async def set_pin(body: SetPinBody):
+    if not body.pin.isdigit() or len(body.pin) != 4:
+        raise HTTPException(status_code=400, detail="PIN must be exactly 4 digits")
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Only allow setting if not already set
+        async with db.execute(
+            "SELECT 1 FROM rooms WHERE room_id = ?", (body.room_id,)
+        ) as cursor:
+            exists = await cursor.fetchone()
+        if exists:
+            raise HTTPException(status_code=409, detail="PIN already set for this room")
+        await db.execute(
+            "INSERT INTO rooms (room_id, pin) VALUES (?, ?)",
+            (body.room_id, body.pin)
+        )
+        await db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/room/verify-pin")
+async def verify_pin(body: VerifyPinBody):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT pin FROM rooms WHERE room_id = ?", (body.room_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if row[0] != body.pin:
+        raise HTTPException(status_code=403, detail="Wrong PIN")
+    return {"ok": True}
+
+
+# ── Existing endpoints (now require pin) ─────────────────────────────────────
+
+async def _check_pin(db, room_id: str, pin: str):
+    async with db.execute(
+        "SELECT pin FROM rooms WHERE room_id = ?", (room_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+    if not row or row[0] != pin:
+        raise HTTPException(status_code=403, detail="Wrong PIN")
+
+
 class SubscribeBody(BaseModel):
     room_id: str
     user_id: str
+    pin: str
     subscription: dict
 
 
 class PingBody(BaseModel):
     room_id: str
     user_id: str
+    pin: str
 
 
 @app.post("/api/subscribe")
@@ -96,6 +172,7 @@ async def subscribe(body: SubscribeBody):
     if body.user_id not in ("a", "b"):
         raise HTTPException(status_code=400, detail="user_id must be 'a' or 'b'")
     async with aiosqlite.connect(DB_PATH) as db:
+        await _check_pin(db, body.room_id, body.pin)
         await db.execute(
             """INSERT OR REPLACE INTO subscriptions (room_id, user_id, subscription, updated_at)
                VALUES (?, ?, ?, datetime('now'))""",
@@ -130,6 +207,7 @@ def _send_push_sync(subscription_info: dict, payload: dict):
 async def ping(body: PingBody):
     partner = "b" if body.user_id == "a" else "a"
     async with aiosqlite.connect(DB_PATH) as db:
+        await _check_pin(db, body.room_id, body.pin)
         async with db.execute(
             "SELECT subscription FROM subscriptions WHERE room_id = ? AND user_id = ?",
             (body.room_id, partner)

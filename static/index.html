@@ -31,6 +31,99 @@
     gap: 32px;
   }
 
+  /* ── PIN screen ── */
+  #pin-screen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+    width: 100%;
+    max-width: 320px;
+  }
+
+  #pin-screen h2 {
+    font-size: 20px;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  #pin-screen p {
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  .pin-dots {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+  }
+
+  .pin-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #2a2a40;
+    transition: background 0.2s;
+  }
+
+  .pin-dot.filled { background: var(--heart); }
+
+  .pin-keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 72px);
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .pin-key {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    border: 1px solid #2a2a40;
+    background: var(--card);
+    color: var(--text);
+    font-size: 22px;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    -webkit-tap-highlight-color: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .pin-key:active { background: #2a2a40; transform: scale(0.93); }
+  .pin-key.delete { font-size: 18px; color: var(--muted); }
+  .pin-key.empty { border: none; background: none; cursor: default; }
+
+  #pin-error {
+    font-size: 13px;
+    color: var(--heart);
+    min-height: 18px;
+    text-align: center;
+  }
+
+  #pin-submit {
+    background: var(--heart);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px 40px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    width: 100%;
+  }
+
+  #pin-submit:disabled { opacity: 0.4; cursor: default; }
+  #pin-submit:not(:disabled):active { opacity: 0.8; }
+
+  /* ── Main screen ── */
+  #main-screen { display: none; flex-direction: column; align-items: center; gap: 32px; width: 100%; }
+
   #status {
     font-size: 14px;
     color: var(--muted);
@@ -169,30 +262,89 @@
 </head>
 <body>
 
-<div id="status">connecting...</div>
+<!-- PIN screen -->
+<div id="pin-screen">
+  <h2 id="pin-title">Set your secret PIN</h2>
+  <p id="pin-desc">Choose a 4-digit PIN. Share it privately with your partner — only you two can access this room.</p>
+  <div class="pin-dots">
+    <div class="pin-dot" id="d0"></div>
+    <div class="pin-dot" id="d1"></div>
+    <div class="pin-dot" id="d2"></div>
+    <div class="pin-dot" id="d3"></div>
+  </div>
+  <div id="pin-error"></div>
+  <div class="pin-keypad">
+    <button class="pin-key" data-n="1">1</button>
+    <button class="pin-key" data-n="2">2</button>
+    <button class="pin-key" data-n="3">3</button>
+    <button class="pin-key" data-n="4">4</button>
+    <button class="pin-key" data-n="5">5</button>
+    <button class="pin-key" data-n="6">6</button>
+    <button class="pin-key" data-n="7">7</button>
+    <button class="pin-key" data-n="8">8</button>
+    <button class="pin-key" data-n="9">9</button>
+    <button class="pin-key empty"></button>
+    <button class="pin-key" data-n="0">0</button>
+    <button class="pin-key delete" id="pin-del">⌫</button>
+  </div>
+  <button id="pin-submit" disabled>Confirm</button>
+</div>
 
-<button id="heart-btn" title="Tap to send love">
-  <svg viewBox="0 0 100 90" xmlns="http://www.w3.org/2000/svg">
-    <path d="M50 85 C50 85 5 55 5 28 C5 14 16 5 28 5 C37 5 45 10 50 18 C55 10 63 5 72 5 C84 5 95 14 95 28 C95 55 50 85 50 85Z"/>
-  </svg>
-</button>
+<!-- Main screen -->
+<div id="main-screen">
+  <div id="status">connecting...</div>
 
-<div id="hint">tap to send 💗</div>
+  <button id="heart-btn" title="Tap to send love">
+    <svg viewBox="0 0 100 90" xmlns="http://www.w3.org/2000/svg">
+      <path d="M50 85 C50 85 5 55 5 28 C5 14 16 5 28 5 C37 5 45 10 50 18 C55 10 63 5 72 5 C84 5 95 14 95 28 C95 55 50 85 50 85Z"/>
+    </svg>
+  </button>
 
-<button id="notify-btn">Enable notifications</button>
-<div id="no-push-banner">Your browser doesn't support push notifications — taps are still sent 💗</div>
+  <div id="hint">tap to send 💗</div>
 
-<div id="share-box">
-  <p>Share this link with your partner</p>
-  <div class="link-row">
-    <div id="room-link"></div>
-    <button id="copy-btn">Copy</button>
+  <button id="notify-btn">Enable notifications</button>
+  <div id="no-push-banner">Your browser doesn't support push notifications — taps are still sent 💗</div>
+
+  <div id="share-box">
+    <p>Share this link with your partner</p>
+    <div class="link-row">
+      <div id="room-link"></div>
+      <button id="copy-btn">Copy</button>
+    </div>
   </div>
 </div>
 
 <script>
-let roomId, userId, isSubscribed = false, swReg = null;
+let roomId, userId, userPin, isSubscribed = false, swReg = null;
 
+// ── PIN keypad ────────────────────────────────────────────────────────────────
+let pinBuffer = '';
+
+function updateDots() {
+  for (let i = 0; i < 4; i++) {
+    document.getElementById('d' + i).classList.toggle('filled', i < pinBuffer.length);
+  }
+  document.getElementById('pin-submit').disabled = pinBuffer.length < 4;
+}
+
+document.querySelectorAll('.pin-key[data-n]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (pinBuffer.length < 4) {
+      pinBuffer += btn.dataset.n;
+      updateDots();
+    }
+  });
+});
+
+document.getElementById('pin-del').addEventListener('click', () => {
+  pinBuffer = pinBuffer.slice(0, -1);
+  updateDots();
+  document.getElementById('pin-error').textContent = '';
+});
+
+document.getElementById('pin-submit').addEventListener('click', handlePinSubmit);
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -207,6 +359,67 @@ function genRoomId() {
   return Array.from({length: 6}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
 }
 
+function pushSupported() {
+  return ('Notification' in window) && ('serviceWorker' in navigator) && ('PushManager' in window);
+}
+
+function showMain() {
+  document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('main-screen').style.display = 'flex';
+}
+
+// ── PIN flow ──────────────────────────────────────────────────────────────────
+async function handlePinSubmit() {
+  const pin = pinBuffer;
+  const errEl = document.getElementById('pin-error');
+  errEl.textContent = '';
+
+  const hasPinRes = await fetch('/api/room/' + roomId + '/has-pin').then(r => r.json());
+
+  if (!hasPinRes.has_pin) {
+    // First person — set the PIN
+    const res = await fetch('/api/room/set-pin', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room_id: roomId, pin })
+    });
+    if (!res.ok) {
+      // Race: partner set it just now, verify instead
+      const verify = await fetch('/api/room/verify-pin', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ room_id: roomId, pin })
+      });
+      if (!verify.ok) {
+        errEl.textContent = 'Wrong PIN. Try again.';
+        pinBuffer = '';
+        updateDots();
+        return;
+      }
+    }
+  } else {
+    // Room already has a PIN — verify
+    const verify = await fetch('/api/room/verify-pin', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room_id: roomId, pin })
+    });
+    if (!verify.ok) {
+      errEl.textContent = 'Wrong PIN. Try again.';
+      pinBuffer = '';
+      updateDots();
+      return;
+    }
+  }
+
+  // PIN accepted
+  userPin = pin;
+  localStorage.setItem('lp_pin_' + roomId, pin);
+  showMain();
+  startMain();
+}
+
+// ── Main app ──────────────────────────────────────────────────────────────────
 async function pollStatus() {
   try {
     const r = await fetch('/api/room/' + roomId).then(r => r.json());
@@ -216,10 +429,6 @@ async function pollStatus() {
     el.textContent = both ? 'Connected ✓' : 'Waiting for partner...';
     el.style.color = both ? 'var(--connected)' : 'var(--muted)';
   } catch(e) {}
-}
-
-function pushSupported() {
-  return ('Notification' in window) && ('serviceWorker' in navigator) && ('PushManager' in window);
 }
 
 async function subscribeNotifications() {
@@ -236,7 +445,7 @@ async function subscribeNotifications() {
     await fetch('/api/subscribe', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ room_id: roomId, user_id: userId, subscription: sub.toJSON() })
+      body: JSON.stringify({ room_id: roomId, user_id: userId, pin: userPin, subscription: sub.toJSON() })
     });
     isSubscribed = true;
     const btn = document.getElementById('notify-btn');
@@ -249,6 +458,50 @@ async function subscribeNotifications() {
   }
 }
 
+function startMain() {
+  document.getElementById('room-link').textContent = window.location.href;
+
+  if (!pushSupported()) {
+    document.getElementById('notify-btn').style.display = 'none';
+    document.getElementById('no-push-banner').style.display = 'block';
+  }
+
+  pollStatus();
+  setInterval(pollStatus, 4000);
+}
+
+// Heart button — always tappable
+document.getElementById('heart-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('heart-btn');
+  btn.classList.remove('tapped');
+  void btn.offsetWidth;
+  btn.classList.add('tapped');
+  setTimeout(() => btn.classList.remove('tapped'), 600);
+
+  if (!isSubscribed && pushSupported()) {
+    subscribeNotifications();
+  }
+
+  fetch('/api/ping', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ room_id: roomId, user_id: userId, pin: userPin })
+  });
+});
+
+// Enable notifications button
+document.getElementById('notify-btn').addEventListener('click', subscribeNotifications);
+
+// Copy button
+document.getElementById('copy-btn').addEventListener('click', () => {
+  navigator.clipboard.writeText(window.location.href).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
   const params = new URLSearchParams(window.location.search);
   roomId = params.get('room');
@@ -266,9 +519,6 @@ async function init() {
     localStorage.setItem(storageKey, userId);
   }
 
-  // Set link
-  document.getElementById('room-link').textContent = window.location.href;
-
   // Register service worker
   if ('serviceWorker' in navigator) {
     try {
@@ -276,52 +526,33 @@ async function init() {
     } catch(e) { console.warn('SW registration failed', e); }
   }
 
-  // Show/hide notify button based on push support
-  const notifyBtn = document.getElementById('notify-btn');
-  if (!pushSupported()) {
-    notifyBtn.style.display = 'none';
-    const banner = document.getElementById('no-push-banner');
-    if (banner) banner.style.display = 'block';
+  // Check if PIN already saved locally and still valid
+  const savedPin = localStorage.getItem('lp_pin_' + roomId);
+  if (savedPin) {
+    const hasPinRes = await fetch('/api/room/' + roomId + '/has-pin').then(r => r.json());
+    if (hasPinRes.has_pin) {
+      const verify = await fetch('/api/room/verify-pin', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ room_id: roomId, pin: savedPin })
+      });
+      if (verify.ok) {
+        userPin = savedPin;
+        showMain();
+        startMain();
+        return;
+      }
+    }
+    localStorage.removeItem('lp_pin_' + roomId);
   }
 
-  // Poll status
-  pollStatus();
-  setInterval(pollStatus, 4000);
+  // Show PIN screen with appropriate text
+  const hasPinRes = await fetch('/api/room/' + roomId + '/has-pin').then(r => r.json());
+  if (hasPinRes.has_pin) {
+    document.getElementById('pin-title').textContent = 'Enter your PIN';
+    document.getElementById('pin-desc').textContent = 'Enter the 4-digit PIN to access your love room 💗';
+  }
 }
-
-// Heart button — always tappable
-document.getElementById('heart-btn').addEventListener('click', async () => {
-  // Animate immediately
-  const btn = document.getElementById('heart-btn');
-  btn.classList.remove('tapped');
-  void btn.offsetWidth;
-  btn.classList.add('tapped');
-  setTimeout(() => btn.classList.remove('tapped'), 600);
-
-  // Try to subscribe on first tap if supported
-  if (!isSubscribed && pushSupported()) {
-    subscribeNotifications(); // fire-and-forget, don't block ping
-  }
-
-  // Always send the ping
-  fetch('/api/ping', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ room_id: roomId, user_id: userId })
-  });
-});
-
-// Enable notifications button
-document.getElementById('notify-btn').addEventListener('click', subscribeNotifications);
-
-// Copy button
-document.getElementById('copy-btn').addEventListener('click', () => {
-  navigator.clipboard.writeText(window.location.href).then(() => {
-    const btn = document.getElementById('copy-btn');
-    btn.textContent = 'Copied!';
-    setTimeout(() => btn.textContent = 'Copy', 1500);
-  });
-});
 
 init();
 </script>
