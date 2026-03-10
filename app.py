@@ -87,6 +87,13 @@ async def init_db(pool: asyncpg.Pool):
                 created_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS security (
+                room_id  TEXT PRIMARY KEY,
+                question TEXT NOT NULL,
+                answer   TEXT NOT NULL
+            )
+        """)
 
 
 @asynccontextmanager
@@ -187,7 +194,7 @@ async def join_room(body: JoinBody):
             body.room_id, body.session_id
         )
         if existing:
-            return {"ok": True, "user_id": existing["user_id"]}
+            return {"ok": True, "user_id": existing["user_id"], "new_device": False}
 
         taken = await conn.fetch(
             "SELECT DISTINCT user_id FROM presence WHERE room_id=$1", body.room_id
@@ -213,7 +220,74 @@ async def join_room(body: JoinBody):
             " ON CONFLICT(room_id, session_id) DO UPDATE SET user_id=EXCLUDED.user_id",
             body.room_id, body.session_id, new_uid
         )
-    return {"ok": True, "user_id": new_uid}
+    return {"ok": True, "user_id": new_uid, "new_device": True}
+
+
+# ── Security question ─────────────────────────────────────────────────────────
+
+VALID_QUESTIONS = {"anniversary", "boy_birthday", "girl_birthday"}
+
+
+def norm_answer(s: str) -> str:
+    import re
+    return re.sub(r'[\s\-/年月日]', '', s).lower()
+
+
+class SetSecurityBody(BaseModel):
+    room_id: str
+    pin: str
+    question: str
+    answer: str
+
+
+class VerifySecurityBody(BaseModel):
+    room_id: str
+    pin: str
+    answer: str
+
+
+@app.get("/api/room/{room_id}/has-security")
+async def has_security(room_id: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT question FROM security WHERE room_id=$1", room_id)
+    return {"has_security": row is not None, "question": row["question"] if row else None}
+
+
+@app.post("/api/room/set-security")
+async def set_security(body: SetSecurityBody):
+    if body.question not in VALID_QUESTIONS:
+        raise HTTPException(status_code=400, detail="invalid question")
+    if not body.answer.strip():
+        raise HTTPException(status_code=400, detail="answer required")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+        if not room or room["pin"] != body.pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
+        existing = await conn.fetchrow("SELECT 1 FROM security WHERE room_id=$1", body.room_id)
+        if existing:
+            raise HTTPException(status_code=409, detail="Security question already set")
+        await conn.execute(
+            "INSERT INTO security(room_id, question, answer) VALUES($1, $2, $3)",
+            body.room_id, body.question, norm_answer(body.answer)
+        )
+    return {"ok": True}
+
+
+@app.post("/api/room/verify-security")
+async def verify_security(body: VerifySecurityBody):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+        if not room or room["pin"] != body.pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
+        row = await conn.fetchrow("SELECT answer FROM security WHERE room_id=$1", body.room_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="No security question set")
+    if norm_answer(body.answer) != row["answer"]:
+        raise HTTPException(status_code=403, detail="Wrong answer")
+    return {"ok": True}
 
 
 # ── Room status ───────────────────────────────────────────────────────────────

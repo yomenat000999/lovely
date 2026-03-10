@@ -556,6 +556,82 @@
     from { top: -10px; opacity: 0; }
     to   { top: 20px;  opacity: 1; }
   }
+
+  /* ── Security screen ── */
+  #security-screen {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    width: 100%;
+    max-width: 320px;
+  }
+
+  #security-screen h2 {
+    font-size: 20px;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  #security-screen p {
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  .sq-option {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid #2a2a40;
+    border-radius: 12px;
+    color: var(--text);
+    font-size: 14px;
+    padding: 14px 16px;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    transition: border-color 0.2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sq-option:active, .sq-option.sel { border-color: var(--heart); background: #2a0a14; }
+
+  #sq-answer-wrap { width: 100%; display: none; flex-direction: column; gap: 10px; }
+
+  #sq-answer {
+    width: 100%;
+    background: #111126;
+    border: 1px solid #2a2a40;
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 15px;
+    padding: 12px 14px;
+    font-family: inherit;
+    outline: none;
+    text-align: center;
+    letter-spacing: 0.05em;
+  }
+  #sq-answer:focus { border-color: var(--heart); }
+  #sq-answer::placeholder { color: var(--muted); }
+
+  #sq-error { font-size: 13px; color: var(--heart); min-height: 18px; text-align: center; }
+
+  #sq-submit {
+    background: var(--heart);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    width: 100%;
+    font-family: inherit;
+    transition: opacity 0.2s;
+  }
+  #sq-submit:disabled { opacity: 0.4; cursor: default; }
+  #sq-submit:not(:disabled):active { opacity: 0.8; }
 </style>
 </head>
 <body>
@@ -586,6 +662,20 @@
     <button class="pin-key delete" id="pin-del">⌫</button>
   </div>
   <button id="pin-submit" disabled>Confirm</button>
+</div>
+
+<!-- Security question screen -->
+<div id="security-screen">
+  <h2 id="sq-title">Set a security question</h2>
+  <p id="sq-desc">Pick a question and answer. Your partner will need to answer it to enter.</p>
+  <button class="sq-option" data-q="anniversary">📅 纪念日</button>
+  <button class="sq-option" data-q="boy_birthday">🎂 男生生日</button>
+  <button class="sq-option" data-q="girl_birthday">🎂 女生生日</button>
+  <div id="sq-answer-wrap">
+    <input id="sq-answer" type="text" placeholder="MMDD，如 0314" autocomplete="off" inputmode="numeric">
+    <div id="sq-error"></div>
+    <button id="sq-submit" disabled>Confirm</button>
+  </div>
 </div>
 
 <!-- Choose screen (shown when room is "full" but PIN is correct) -->
@@ -719,10 +809,121 @@ function pushSupported() {
 
 function showMain() {
   document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('security-screen').style.display = 'none';
   document.getElementById('choose-screen').style.display = 'none';
   document.getElementById('main-screen').style.display = 'flex';
   document.getElementById('menu-btn').style.display = 'block';
 }
+
+const QUESTION_LABELS = {
+  anniversary: '📅 纪念日',
+  boy_birthday: '🎂 男生生日',
+  girl_birthday: '🎂 女生生日'
+};
+
+// Called after PIN+join succeed on a NEW device — check/set security
+async function doSecurity() {
+  const secRes = await fetch(`/api/room/${roomId}/has-security`).then(r => r.json());
+
+  if (!secRes.has_security) {
+    // First person: set security question
+    showSecuritySetup();
+  } else {
+    // Second person: verify
+    showSecurityVerify(secRes.question);
+  }
+}
+
+let selectedQuestion = null;
+
+function showSecuritySetup() {
+  selectedQuestion = null;
+  document.getElementById('sq-title').textContent = 'Set a security question';
+  document.getElementById('sq-desc').textContent = 'Pick a question. Your partner must answer it to enter.';
+  document.querySelectorAll('.sq-option').forEach(b => b.classList.remove('sel'));
+  document.getElementById('sq-answer-wrap').style.display = 'none';
+  document.getElementById('sq-answer').value = '';
+  document.getElementById('sq-error').textContent = '';
+  document.getElementById('sq-submit').disabled = true;
+  document.getElementById('security-screen').style.display = 'flex';
+  document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('choose-screen').style.display = 'none';
+}
+
+function showSecurityVerify(question) {
+  selectedQuestion = question;
+  document.getElementById('sq-title').textContent = 'Security question';
+  document.getElementById('sq-desc').textContent = QUESTION_LABELS[question] || question;
+  document.querySelectorAll('.sq-option').forEach(b => { b.style.display = 'none'; });
+  document.getElementById('sq-answer-wrap').style.display = 'flex';
+  document.getElementById('sq-answer').value = '';
+  document.getElementById('sq-answer').placeholder = 'enter your answer';
+  document.getElementById('sq-error').textContent = '';
+  document.getElementById('sq-submit').disabled = false;
+  document.getElementById('sq-submit').textContent = 'Enter';
+  document.getElementById('security-screen').style.display = 'flex';
+  document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('choose-screen').style.display = 'none';
+}
+
+document.querySelectorAll('.sq-option').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.sq-option').forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+    selectedQuestion = btn.dataset.q;
+    document.getElementById('sq-answer-wrap').style.display = 'flex';
+    document.getElementById('sq-answer').focus();
+    const v = document.getElementById('sq-answer').value.trim();
+    document.getElementById('sq-submit').disabled = v.length === 0;
+  });
+});
+
+document.getElementById('sq-answer').addEventListener('input', function() {
+  document.getElementById('sq-submit').disabled = this.value.trim().length === 0 || !selectedQuestion;
+});
+
+document.getElementById('sq-submit').addEventListener('click', async () => {
+  const answer = document.getElementById('sq-answer').value.trim();
+  const errEl = document.getElementById('sq-error');
+  errEl.textContent = '';
+  if (!answer || !selectedQuestion) return;
+
+  const secRes = await fetch(`/api/room/${roomId}/has-security`).then(r => r.json());
+
+  if (!secRes.has_security) {
+    // Set security
+    const res = await fetch('/api/room/set-security', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room_id: roomId, pin: userPin, question: selectedQuestion, answer })
+    });
+    if (!res.ok) {
+      // Already set by race — fall through to verify
+      const verRes = await fetch('/api/room/verify-security', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ room_id: roomId, pin: userPin, answer })
+      });
+      if (!verRes.ok) { errEl.textContent = 'Wrong answer. Try again.'; return; }
+    }
+  } else {
+    // Verify security
+    const res = await fetch('/api/room/verify-security', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room_id: roomId, pin: userPin, answer })
+    });
+    if (!res.ok) {
+      errEl.textContent = 'Wrong answer. Try again.';
+      document.getElementById('sq-answer').value = '';
+      return;
+    }
+  }
+  // Reset option visibility for future use
+  document.querySelectorAll('.sq-option').forEach(b => { b.style.display = ''; });
+  showMain();
+  startMain();
+});
 
 function showChooseScreen(taps) {
   document.getElementById('pin-screen').style.display = 'none';
@@ -742,8 +943,7 @@ function showChooseScreen(taps) {
       const data = await res.json();
       if (data.ok) {
         userId = data.user_id;
-        showMain();
-        startMain();
+        await doSecurity();
       }
     });
     opts.appendChild(btn);
@@ -815,8 +1015,12 @@ async function handlePinSubmit() {
   userId = joinData.user_id;
   userPin = pin;
   localStorage.setItem('lp_pin_' + roomId, pin);
-  showMain();
-  startMain();
+  if (joinData.new_device) {
+    await doSecurity();
+  } else {
+    showMain();
+    startMain();
+  }
 }
 
 // ── Main app ──────────────────────────────────────────────────────────────────
