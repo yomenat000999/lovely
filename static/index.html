@@ -655,7 +655,7 @@
 
 <script>
 let roomId, userId, userPin, isSubscribed = false, swReg = null, msgUnlocked = false;
-let prevMyTaps = null, selectedAngryAmount = 0;
+let prevMyTaps = null, selectedAngryAmount = 0, currentAllowedMsgs = 0;
 
 // Permanent per-device ID — never changes across sessions
 let deviceId = localStorage.getItem('lp_device_id');
@@ -796,7 +796,7 @@ async function pollStatus() {
     // debug
     document.getElementById('dbg').textContent = `me:${userId} present:[${(r.slots||[]).join(',')}] count:${r.count}`;
 
-    // message unlock progress — based on MY own taps reaching 100
+    // message unlock progress — each 100 hearts = 1 message slot
     const myTaps = (r.taps && r.taps[userId]) || 0;
 
     // Detect angry deduction (my taps went down)
@@ -805,23 +805,28 @@ async function pollStatus() {
     }
     prevMyTaps = myTaps;
 
-    const pct = Math.min(myTaps / 100 * 100, 100);
+    const allowedMsgs = Math.floor(myTaps / 100);
+    currentAllowedMsgs = allowedMsgs;
+    const pct = myTaps % 100;
     document.getElementById('msg-progress-fill').style.width = pct + '%';
-    document.getElementById('msg-lock-text').textContent =
-      myTaps >= 100 ? 'unlocked 💌' : `leave a message — ${myTaps}/100 💗`;
+    if (allowedMsgs === 0) {
+      document.getElementById('msg-lock-text').textContent = `leave a message — ${myTaps}/100 💗`;
+      document.getElementById('msg-lock-icon').style.display = '';
+    } else {
+      document.getElementById('msg-lock-icon').style.display = 'none';
+      document.getElementById('msg-lock-text').textContent =
+        `${allowedMsgs} 💌 unlocked · ${myTaps % 100}/100 toward next`;
+    }
 
-    if (myTaps >= 100 && !msgUnlocked) {
+    if (allowedMsgs > 0 && !msgUnlocked) {
       msgUnlocked = true;
       const sec = document.getElementById('msg-section');
-      document.getElementById('msg-lock').style.display = 'none';
       document.getElementById('msg-unlocked').style.display = 'flex';
       sec.classList.add('just-unlocked');
       setTimeout(() => sec.classList.remove('just-unlocked'), 600);
       loadMessages();
-    } else if (myTaps < 100 && msgUnlocked) {
-      // Re-lock when hearts fall below 100
+    } else if (allowedMsgs === 0 && msgUnlocked) {
       msgUnlocked = false;
-      document.getElementById('msg-lock').style.display = '';
       document.getElementById('msg-unlocked').style.display = 'none';
     } else if (msgUnlocked) {
       loadMessages();
@@ -845,15 +850,21 @@ async function loadMessages() {
     }
     if (wasAtBottom || r.messages.length <= 1) list.scrollTop = list.scrollHeight;
 
-    // Disable compose if I already sent my one message
-    const alreadySent = r.messages.some(m => m.sender === userId);
+    // Enable compose based on remaining message slots
+    const sentByMe = r.messages.filter(m => m.sender === userId).length;
+    const canSend = sentByMe < currentAllowedMsgs;
     const input = document.getElementById('msg-input');
     const sendBtn = document.getElementById('msg-send');
-    if (alreadySent) {
+    if (!canSend) {
       input.disabled = true;
-      input.placeholder = 'message sent 💌';
+      input.placeholder = sentByMe > 0 ? `${sentByMe} sent · need more 💗` : 'message sent 💌';
       sendBtn.disabled = true;
       sendBtn.style.opacity = '0.4';
+    } else {
+      input.disabled = false;
+      input.placeholder = 'write something...';
+      sendBtn.disabled = false;
+      sendBtn.style.opacity = '1';
     }
   } catch(e) {}
 }
