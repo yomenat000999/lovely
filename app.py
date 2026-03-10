@@ -171,6 +171,7 @@ class JoinBody(BaseModel):
     room_id: str
     pin: str
     session_id: str
+    force_user_id: str | None = None
 
 
 @app.post("/api/room/join")
@@ -189,18 +190,27 @@ async def join_room(body: JoinBody):
             return {"ok": True, "user_id": existing["user_id"]}
 
         taken = await conn.fetch(
-            "SELECT user_id FROM presence WHERE room_id=$1", body.room_id
+            "SELECT DISTINCT user_id FROM presence WHERE room_id=$1", body.room_id
         )
         taken_ids = {r["user_id"] for r in taken}
-        if "a" not in taken_ids:
+
+        if body.force_user_id in ("a", "b"):
+            new_uid = body.force_user_id
+        elif "a" not in taken_ids:
             new_uid = "a"
         elif "b" not in taken_ids:
             new_uid = "b"
         else:
-            raise HTTPException(status_code=409, detail="Room is full")
+            # Both slots occupied by other devices — ask user to pick
+            ping_rows = await conn.fetch(
+                "SELECT user_id, count FROM pings WHERE room_id=$1", body.room_id
+            )
+            taps = {r["user_id"]: r["count"] for r in ping_rows}
+            return {"ok": False, "choose": True, "taps": taps}
 
         await conn.execute(
-            "INSERT INTO presence(room_id, session_id, user_id) VALUES($1, $2, $3)",
+            "INSERT INTO presence(room_id, session_id, user_id) VALUES($1, $2, $3)"
+            " ON CONFLICT(room_id, session_id) DO UPDATE SET user_id=EXCLUDED.user_id",
             body.room_id, body.session_id, new_uid
         )
     return {"ok": True, "user_id": new_uid}

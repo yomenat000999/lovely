@@ -588,6 +588,13 @@
   <button id="pin-submit" disabled>Confirm</button>
 </div>
 
+<!-- Choose screen (shown when room is "full" but PIN is correct) -->
+<div id="choose-screen" style="display:none;flex-direction:column;align-items:center;gap:24px;width:100%;max-width:320px;">
+  <h2 style="font-size:20px;font-weight:600;text-align:center;line-height:1.4;">Who are you? 💗</h2>
+  <p style="font-size:13px;color:var(--muted);text-align:center;line-height:1.6;">Both spots are taken by other devices.<br>Pick which person you are to continue.</p>
+  <div id="choose-options" style="display:flex;flex-direction:column;gap:12px;width:100%;"></div>
+</div>
+
 <!-- Hamburger menu button (fixed, shown only on main screen) -->
 <button id="menu-btn">☰</button>
 
@@ -712,8 +719,36 @@ function pushSupported() {
 
 function showMain() {
   document.getElementById('pin-screen').style.display = 'none';
+  document.getElementById('choose-screen').style.display = 'none';
   document.getElementById('main-screen').style.display = 'flex';
   document.getElementById('menu-btn').style.display = 'block';
+}
+
+function showChooseScreen(taps) {
+  document.getElementById('pin-screen').style.display = 'none';
+  const opts = document.getElementById('choose-options');
+  opts.innerHTML = '';
+  ['a', 'b'].forEach(uid => {
+    const t = (taps && taps[uid]) || 0;
+    const btn = document.createElement('button');
+    btn.style.cssText = 'background:var(--card);border:1px solid #2a2a40;border-radius:14px;color:var(--text);font-size:15px;padding:18px 20px;cursor:pointer;font-family:inherit;text-align:left;transition:border-color 0.2s;';
+    btn.innerHTML = `<span style="font-weight:600">Person ${uid.toUpperCase()}</span><span style="float:right;color:var(--heart)">${t} 💗 sent</span>`;
+    btn.addEventListener('click', async () => {
+      const res = await fetch('/api/room/join', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ room_id: roomId, pin: userPin, session_id: deviceId, force_user_id: uid })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        userId = data.user_id;
+        showMain();
+        startMain();
+      }
+    });
+    opts.appendChild(btn);
+  });
+  document.getElementById('choose-screen').style.display = 'flex';
 }
 
 // ── PIN flow ──────────────────────────────────────────────────────────────────
@@ -766,11 +801,17 @@ async function handlePinSubmit() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ room_id: roomId, pin, session_id: deviceId })
   });
-  if (!joinRes.ok) {
-    errEl.textContent = 'Room is full (max 2 people).';
+  const joinData = await joinRes.json();
+  if (joinData.choose) {
+    userPin = pin;
+    localStorage.setItem('lp_pin_' + roomId, pin);
+    showChooseScreen(joinData.taps);
     return;
   }
-  const joinData = await joinRes.json();
+  if (!joinRes.ok || !joinData.ok) {
+    errEl.textContent = 'Could not join room. Try again.';
+    return;
+  }
   userId = joinData.user_id;
   userPin = pin;
   localStorage.setItem('lp_pin_' + roomId, pin);
@@ -1065,9 +1106,14 @@ async function init() {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ room_id: roomId, pin: savedPin, session_id: deviceId })
       });
-      if (joinRes.ok) {
-        const data = await joinRes.json();
-        userId = data.user_id;
+      const joinData = await joinRes.json();
+      if (joinData.choose) {
+        userPin = savedPin;
+        showChooseScreen(joinData.taps);
+        return;
+      }
+      if (joinData.ok) {
+        userId = joinData.user_id;
         userPin = savedPin;
         showMain();
         startMain();
