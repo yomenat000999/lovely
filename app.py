@@ -3,6 +3,7 @@ import json
 import os
 from contextlib import asynccontextmanager
 
+import asyncpg
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -15,6 +16,7 @@ load_dotenv()
 VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
 VAPID_PUBLIC_KEY  = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_MAILTO      = os.environ.get("VAPID_MAILTO", "mailto:admin@example.com")
+DATABASE_URL      = os.environ.get("DATABASE_URL", "")
 
 SW_SCRIPT = r"""
 self.addEventListener('push', function(event) {
@@ -34,20 +36,56 @@ self.addEventListener('notificationclick', function(event) {
 });
 """
 
-# ── In-memory state ───────────────────────────────────────────────────────────
-# rooms[room_id] = pin
-rooms: dict[str, str] = {}
-# presence[room_id][session_id] = user_id ('a' or 'b')
-presence: dict[str, dict[str, str]] = {}
-# pings[room_id][user_id] = count
-pings: dict[str, dict[str, int]] = {}
-# subscriptions[room_id][user_id] = push subscription dict
-subscriptions: dict[str, dict[str, dict]] = {}
+db_pool: asyncpg.Pool | None = None
+
+
+async def get_pool() -> asyncpg.Pool:
+    global db_pool
+    if db_pool is None:
+        db_pool = await asyncpg.create_pool(DATABASE_URL)
+    return db_pool
+
+
+async def init_db(pool: asyncpg.Pool):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS rooms (
+                room_id TEXT PRIMARY KEY,
+                pin     TEXT NOT NULL
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS presence (
+                room_id    TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                user_id    TEXT NOT NULL,
+                PRIMARY KEY (room_id, session_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pings (
+                room_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                count   INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (room_id, user_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                room_id      TEXT NOT NULL,
+                user_id      TEXT NOT NULL,
+                subscription TEXT NOT NULL,
+                PRIMARY KEY (room_id, user_id)
+            )
+        """)
 
 
 @asynccontextmanager
 async def lifespan(app):
+    pool = await get_pool()
+    await init_db(pool)
     yield
+    await pool.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -87,24 +125,33 @@ class VerifyPinBody(BaseModel):
 
 @app.get("/api/room/{room_id}/has-pin")
 async def has_pin(room_id: str):
-    return {"has_pin": room_id in rooms}
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT 1 FROM rooms WHERE room_id=$1", room_id)
+    return {"has_pin": row is not None}
 
 
 @app.post("/api/room/set-pin")
 async def set_pin(body: SetPinBody):
     if not body.pin.isdigit() or len(body.pin) != 4:
         raise HTTPException(status_code=400, detail="PIN must be exactly 4 digits")
-    if body.room_id in rooms:
-        raise HTTPException(status_code=409, detail="PIN already set for this room")
-    rooms[body.room_id] = body.pin
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow("SELECT 1 FROM rooms WHERE room_id=$1", body.room_id)
+        if existing:
+            raise HTTPException(status_code=409, detail="PIN already set for this room")
+        await conn.execute("INSERT INTO rooms(room_id, pin) VALUES($1, $2)", body.room_id, body.pin)
     return {"ok": True}
 
 
 @app.post("/api/room/verify-pin")
 async def verify_pin(body: VerifyPinBody):
-    if body.room_id not in rooms:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+    if not row:
         raise HTTPException(status_code=404, detail="Room not found")
-    if rooms[body.room_id] != body.pin:
+    if row["pin"] != body.pin:
         raise HTTPException(status_code=403, detail="Wrong PIN")
     return {"ok": True}
 
@@ -119,25 +166,34 @@ class JoinBody(BaseModel):
 
 @app.post("/api/room/join")
 async def join_room(body: JoinBody):
-    if body.room_id not in rooms or rooms[body.room_id] != body.pin:
-        raise HTTPException(status_code=403, detail="Wrong PIN")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+        if not room or room["pin"] != body.pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
 
-    room_presence = presence.setdefault(body.room_id, {})
+        existing = await conn.fetchrow(
+            "SELECT user_id FROM presence WHERE room_id=$1 AND session_id=$2",
+            body.room_id, body.session_id
+        )
+        if existing:
+            return {"ok": True, "user_id": existing["user_id"]}
 
-    # Reuse existing slot for this device
-    if body.session_id in room_presence:
-        return {"ok": True, "user_id": room_presence[body.session_id]}
+        taken = await conn.fetch(
+            "SELECT user_id FROM presence WHERE room_id=$1", body.room_id
+        )
+        taken_ids = {r["user_id"] for r in taken}
+        if "a" not in taken_ids:
+            new_uid = "a"
+        elif "b" not in taken_ids:
+            new_uid = "b"
+        else:
+            raise HTTPException(status_code=409, detail="Room is full")
 
-    # Assign next available slot
-    taken = set(room_presence.values())
-    if "a" not in taken:
-        new_uid = "a"
-    elif "b" not in taken:
-        new_uid = "b"
-    else:
-        raise HTTPException(status_code=409, detail="Room is full")
-
-    room_presence[body.session_id] = new_uid
+        await conn.execute(
+            "INSERT INTO presence(room_id, session_id, user_id) VALUES($1, $2, $3)",
+            body.room_id, body.session_id, new_uid
+        )
     return {"ok": True, "user_id": new_uid}
 
 
@@ -145,10 +201,13 @@ async def join_room(body: JoinBody):
 
 @app.get("/api/room/{room_id}")
 async def room_status(room_id: str):
-    room_presence = presence.get(room_id, {})
-    slots = list(set(room_presence.values()))
-    room_pings = pings.get(room_id, {})
-    return {"count": len(slots), "slots": slots, "taps": room_pings}
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM presence WHERE room_id=$1", room_id)
+        slots = list({r["user_id"] for r in rows})
+        ping_rows = await conn.fetch("SELECT user_id, count FROM pings WHERE room_id=$1", room_id)
+        taps = {r["user_id"]: r["count"] for r in ping_rows}
+    return {"count": len(slots), "slots": slots, "taps": taps}
 
 
 # ── Subscribe ─────────────────────────────────────────────────────────────────
@@ -164,9 +223,17 @@ class SubscribeBody(BaseModel):
 async def subscribe(body: SubscribeBody):
     if body.user_id not in ("a", "b"):
         raise HTTPException(status_code=400, detail="user_id must be 'a' or 'b'")
-    if body.room_id not in rooms or rooms[body.room_id] != body.pin:
-        raise HTTPException(status_code=403, detail="Wrong PIN")
-    subscriptions.setdefault(body.room_id, {})[body.user_id] = body.subscription
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+        if not room or room["pin"] != body.pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
+        await conn.execute(
+            """INSERT INTO subscriptions(room_id, user_id, subscription)
+               VALUES($1, $2, $3)
+               ON CONFLICT(room_id, user_id) DO UPDATE SET subscription=EXCLUDED.subscription""",
+            body.room_id, body.user_id, json.dumps(body.subscription)
+        )
     return {"ok": True}
 
 
@@ -190,19 +257,28 @@ def _send_push_sync(subscription_info: dict, payload: dict):
 
 @app.post("/api/ping")
 async def ping(body: PingBody):
-    if body.room_id not in rooms or rooms[body.room_id] != body.pin:
-        raise HTTPException(status_code=403, detail="Wrong PIN")
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+        if not room or room["pin"] != body.pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
 
-    # Increment tap count
-    room_pings = pings.setdefault(body.room_id, {})
-    room_pings[body.user_id] = room_pings.get(body.user_id, 0) + 1
+        await conn.execute(
+            """INSERT INTO pings(room_id, user_id, count) VALUES($1, $2, 1)
+               ON CONFLICT(room_id, user_id) DO UPDATE SET count = pings.count + 1""",
+            body.room_id, body.user_id
+        )
 
-    # Send push to partner
-    partner = "b" if body.user_id == "a" else "a"
-    sub = subscriptions.get(body.room_id, {}).get(partner)
-    if not sub:
+        partner = "b" if body.user_id == "a" else "a"
+        sub_row = await conn.fetchrow(
+            "SELECT subscription FROM subscriptions WHERE room_id=$1 AND user_id=$2",
+            body.room_id, partner
+        )
+
+    if not sub_row:
         return {"ok": True, "delivered": False, "reason": "partner not subscribed yet"}
 
+    sub = json.loads(sub_row["subscription"])
     payload = {"title": "💗", "body": "thinking of you~"}
     loop = asyncio.get_event_loop()
     try:
@@ -210,5 +286,10 @@ async def ping(body: PingBody):
         return {"ok": True, "delivered": True}
     except WebPushException as e:
         if e.response and e.response.status_code == 410:
-            subscriptions.get(body.room_id, {}).pop(partner, None)
+            pool2 = await get_pool()
+            async with pool2.acquire() as conn2:
+                await conn2.execute(
+                    "DELETE FROM subscriptions WHERE room_id=$1 AND user_id=$2",
+                    body.room_id, partner
+                )
         return {"ok": True, "delivered": False, "reason": str(e)}
