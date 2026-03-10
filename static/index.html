@@ -310,6 +310,7 @@
 
   <div id="hint">tap to send 💗</div>
   <div id="partner-taps"></div>
+  <div id="dbg" style="font-size:10px;color:#444;margin-top:-20px;"></div>
 
   <button id="notify-btn">Enable notifications</button>
   <div id="no-push-banner">Your browser doesn't support push notifications — taps are still sent 💗</div>
@@ -454,7 +455,12 @@ async function pollStatus() {
     const partnerTaps = (r.taps && r.taps[partner]) || 0;
     const tapEl = document.getElementById('partner-taps');
     tapEl.textContent = partnerTaps > 0 ? `they've sent you ${partnerTaps} 💗` : '';
-  } catch(e) {}
+
+    // debug
+    document.getElementById('dbg').textContent = `me:${userId} present:[${(r.slots||[]).join(',')}] count:${r.count}`;
+  } catch(e) {
+    document.getElementById('dbg').textContent = 'poll error: ' + e;
+  }
 }
 
 async function subscribeNotifications() {
