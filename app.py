@@ -48,8 +48,9 @@ async def init_db():
         """)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS presence (
-                room_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
+                room_id    TEXT NOT NULL,
+                user_id    TEXT NOT NULL,
+                session_id TEXT NOT NULL,
                 PRIMARY KEY (room_id, user_id)
             )
         """)
@@ -171,24 +172,30 @@ async def verify_pin(body: VerifyPinBody):
 class JoinBody(BaseModel):
     room_id: str
     pin: str
-    user_id: str | None = None  # existing user hint
+    session_id: str
 
 
 @app.post("/api/room/join")
 async def join_room(body: JoinBody):
     async with aiosqlite.connect(DB_PATH) as db:
         await _check_pin(db, body.room_id, body.pin)
+
+        # If this device already has a slot, reuse it
+        async with db.execute(
+            "SELECT user_id FROM presence WHERE room_id = ? AND session_id = ?",
+            (body.room_id, body.session_id)
+        ) as cursor:
+            existing = await cursor.fetchone()
+        if existing:
+            return {"ok": True, "user_id": existing[0]}
+
+        # Assign next available slot
         async with db.execute(
             "SELECT user_id FROM presence WHERE room_id = ?", (body.room_id,)
         ) as cursor:
             rows = await cursor.fetchall()
         present = [r[0] for r in rows]
 
-        # If caller already has a slot, reuse it
-        if body.user_id and body.user_id in present:
-            return {"ok": True, "user_id": body.user_id}
-
-        # Assign next available slot
         if "a" not in present:
             new_uid = "a"
         elif "b" not in present:
@@ -197,8 +204,8 @@ async def join_room(body: JoinBody):
             raise HTTPException(status_code=409, detail="Room is full")
 
         await db.execute(
-            "INSERT INTO presence (room_id, user_id) VALUES (?, ?)",
-            (body.room_id, new_uid)
+            "INSERT INTO presence (room_id, user_id, session_id) VALUES (?, ?, ?)",
+            (body.room_id, new_uid, body.session_id)
         )
         await db.commit()
     return {"ok": True, "user_id": new_uid}

@@ -327,6 +327,13 @@
 <script>
 let roomId, userId, userPin, isSubscribed = false, swReg = null;
 
+// Permanent per-device ID — never changes across sessions
+let deviceId = localStorage.getItem('lp_device_id');
+if (!deviceId) {
+  deviceId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  localStorage.setItem('lp_device_id', deviceId);
+}
+
 // ── PIN keypad ────────────────────────────────────────────────────────────────
 let pinBuffer = '';
 
@@ -426,7 +433,7 @@ async function handlePinSubmit() {
   const joinRes = await fetch('/api/room/join', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ room_id: roomId, pin, user_id: userId })
+    body: JSON.stringify({ room_id: roomId, pin, session_id: deviceId })
   });
   if (!joinRes.ok) {
     errEl.textContent = 'Room is full (max 2 people).';
@@ -435,7 +442,6 @@ async function handlePinSubmit() {
   const joinData = await joinRes.json();
   userId = joinData.user_id;
   userPin = pin;
-  localStorage.setItem('lp_uid_' + roomId, userId);
   localStorage.setItem('lp_pin_' + roomId, pin);
   showMain();
   startMain();
@@ -542,9 +548,6 @@ async function init() {
     return;
   }
 
-  // user_id is assigned server-side during join, not here
-  userId = localStorage.getItem('lp_uid_' + roomId);
-
   // Register service worker
   if ('serviceWorker' in navigator) {
     try {
@@ -560,12 +563,11 @@ async function init() {
       const joinRes = await fetch('/api/room/join', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ room_id: roomId, pin: savedPin, user_id: userId })
+        body: JSON.stringify({ room_id: roomId, pin: savedPin, session_id: deviceId })
       });
       if (joinRes.ok) {
         const data = await joinRes.json();
         userId = data.user_id;
-        localStorage.setItem('lp_uid_' + roomId, userId);
         userPin = savedPin;
         showMain();
         startMain();
@@ -573,7 +575,6 @@ async function init() {
       }
     }
     localStorage.removeItem('lp_pin_' + roomId);
-    localStorage.removeItem('lp_uid_' + roomId);
   }
 
   // Show PIN screen with appropriate text
