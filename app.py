@@ -47,6 +47,21 @@ async def init_db():
             )
         """)
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS presence (
+                room_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                PRIMARY KEY (room_id, user_id)
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS pings (
+                room_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                count   INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (room_id, user_id)
+            )
+        """)
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
                 room_id      TEXT NOT NULL,
                 user_id      TEXT NOT NULL,
@@ -87,7 +102,16 @@ async def vapid_public_key():
     return Response(content=VAPID_PUBLIC_KEY, media_type="text/plain")
 
 
-# ── PIN helpers ──────────────────────────────────────────────────────────────
+# ── PIN helpers ───────────────────────────────────────────────────────────────
+
+async def _check_pin(db, room_id: str, pin: str):
+    async with db.execute(
+        "SELECT pin FROM rooms WHERE room_id = ?", (room_id,)
+    ) as cursor:
+        row = await cursor.fetchone()
+    if not row or row[0] != pin:
+        raise HTTPException(status_code=403, detail="Wrong PIN")
+
 
 class SetPinBody(BaseModel):
     room_id: str
@@ -114,7 +138,6 @@ async def set_pin(body: SetPinBody):
     if not body.pin.isdigit() or len(body.pin) != 4:
         raise HTTPException(status_code=400, detail="PIN must be exactly 4 digits")
     async with aiosqlite.connect(DB_PATH) as db:
-        # Only allow setting if not already set
         async with db.execute(
             "SELECT 1 FROM rooms WHERE room_id = ?", (body.room_id,)
         ) as cursor:
@@ -143,28 +166,53 @@ async def verify_pin(body: VerifyPinBody):
     return {"ok": True}
 
 
-# ── Existing endpoints (now require pin) ─────────────────────────────────────
+# ── Room join (presence) ──────────────────────────────────────────────────────
 
-async def _check_pin(db, room_id: str, pin: str):
-    async with db.execute(
-        "SELECT pin FROM rooms WHERE room_id = ?", (room_id,)
-    ) as cursor:
-        row = await cursor.fetchone()
-    if not row or row[0] != pin:
-        raise HTTPException(status_code=403, detail="Wrong PIN")
+class JoinBody(BaseModel):
+    room_id: str
+    user_id: str
+    pin: str
 
+
+@app.post("/api/room/join")
+async def join_room(body: JoinBody):
+    if body.user_id not in ("a", "b"):
+        raise HTTPException(status_code=400, detail="user_id must be 'a' or 'b'")
+    async with aiosqlite.connect(DB_PATH) as db:
+        await _check_pin(db, body.room_id, body.pin)
+        await db.execute(
+            "INSERT OR IGNORE INTO presence (room_id, user_id) VALUES (?, ?)",
+            (body.room_id, body.user_id)
+        )
+        await db.commit()
+    return {"ok": True}
+
+
+# ── Room status ───────────────────────────────────────────────────────────────
+
+@app.get("/api/room/{room_id}")
+async def room_status(room_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT user_id FROM presence WHERE room_id = ?", (room_id,)
+        ) as cursor:
+            presence_rows = await cursor.fetchall()
+        async with db.execute(
+            "SELECT user_id, count FROM pings WHERE room_id = ?", (room_id,)
+        ) as cursor:
+            ping_rows = await cursor.fetchall()
+    present = [r[0] for r in presence_rows]
+    taps = {r[0]: r[1] for r in ping_rows}
+    return {"count": len(present), "slots": present, "taps": taps}
+
+
+# ── Subscribe ─────────────────────────────────────────────────────────────────
 
 class SubscribeBody(BaseModel):
     room_id: str
     user_id: str
     pin: str
     subscription: dict
-
-
-class PingBody(BaseModel):
-    room_id: str
-    user_id: str
-    pin: str
 
 
 @app.post("/api/subscribe")
@@ -182,15 +230,12 @@ async def subscribe(body: SubscribeBody):
     return {"ok": True}
 
 
-@app.get("/api/room/{room_id}")
-async def room_status(room_id: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT user_id FROM subscriptions WHERE room_id = ?", (room_id,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-    slots = [r[0] for r in rows]
-    return {"count": len(slots), "slots": slots}
+# ── Ping ──────────────────────────────────────────────────────────────────────
+
+class PingBody(BaseModel):
+    room_id: str
+    user_id: str
+    pin: str
 
 
 def _send_push_sync(subscription_info: dict, payload: dict):
@@ -208,6 +253,14 @@ async def ping(body: PingBody):
     partner = "b" if body.user_id == "a" else "a"
     async with aiosqlite.connect(DB_PATH) as db:
         await _check_pin(db, body.room_id, body.pin)
+        # Increment sender's tap count
+        await db.execute(
+            """INSERT INTO pings (room_id, user_id, count) VALUES (?, ?, 1)
+               ON CONFLICT(room_id, user_id) DO UPDATE SET count = count + 1""",
+            (body.room_id, body.user_id)
+        )
+        await db.commit()
+        # Get partner's push subscription
         async with db.execute(
             "SELECT subscription FROM subscriptions WHERE room_id = ? AND user_id = ?",
             (body.room_id, partner)

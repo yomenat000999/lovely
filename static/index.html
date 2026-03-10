@@ -179,6 +179,14 @@
     line-height: 1.6;
   }
 
+  #partner-taps {
+    font-size: 13px;
+    color: var(--heart);
+    text-align: center;
+    min-height: 18px;
+    transition: opacity 0.3s;
+  }
+
   #share-box {
     background: var(--card);
     border-radius: 14px;
@@ -301,6 +309,7 @@
   </button>
 
   <div id="hint">tap to send 💗</div>
+  <div id="partner-taps"></div>
 
   <button id="notify-btn">Enable notifications</button>
   <div id="no-push-banner">Your browser doesn't support push notifications — taps are still sent 💗</div>
@@ -412,9 +421,14 @@ async function handlePinSubmit() {
     }
   }
 
-  // PIN accepted
+  // PIN accepted — register presence
   userPin = pin;
   localStorage.setItem('lp_pin_' + roomId, pin);
+  await fetch('/api/room/join', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ room_id: roomId, user_id: userId, pin })
+  });
   showMain();
   startMain();
 }
@@ -428,6 +442,11 @@ async function pollStatus() {
     const el = document.getElementById('status');
     el.textContent = both ? 'Connected ✓' : 'Waiting for partner...';
     el.style.color = both ? 'var(--connected)' : 'var(--muted)';
+
+    const partner = userId === 'a' ? 'b' : 'a';
+    const partnerTaps = (r.taps && r.taps[partner]) || 0;
+    const tapEl = document.getElementById('partner-taps');
+    tapEl.textContent = partnerTaps > 0 ? `they've sent you ${partnerTaps} 💗` : '';
   } catch(e) {}
 }
 
@@ -538,6 +557,11 @@ async function init() {
       });
       if (verify.ok) {
         userPin = savedPin;
+        await fetch('/api/room/join', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ room_id: roomId, user_id: userId, pin: savedPin })
+        });
         showMain();
         startMain();
         return;
