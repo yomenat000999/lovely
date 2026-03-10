@@ -78,6 +78,15 @@ async def init_db(pool: asyncpg.Pool):
                 PRIMARY KEY (room_id, user_id)
             )
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id         SERIAL PRIMARY KEY,
+                room_id    TEXT NOT NULL,
+                sender_id  TEXT NOT NULL,
+                content    TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
 
 
 @asynccontextmanager
@@ -253,6 +262,69 @@ def _send_push_sync(subscription_info: dict, payload: dict):
         vapid_claims={"sub": VAPID_MAILTO},
         content_encoding="aes128gcm",
     )
+
+
+# ── Messages ──────────────────────────────────────────────────────────────────
+
+class MessageBody(BaseModel):
+    room_id: str
+    user_id: str
+    pin: str
+    content: str
+
+
+@app.post("/api/message")
+async def send_message(body: MessageBody):
+    if body.user_id not in ("a", "b"):
+        raise HTTPException(status_code=400, detail="invalid user_id")
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="empty message")
+    if len(content) > 500:
+        raise HTTPException(status_code=400, detail="message too long")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+        if not room or room["pin"] != body.pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
+        await conn.execute(
+            "INSERT INTO messages(room_id, sender_id, content) VALUES($1, $2, $3)",
+            body.room_id, body.user_id, content
+        )
+        partner = "b" if body.user_id == "a" else "a"
+        sub_row = await conn.fetchrow(
+            "SELECT subscription FROM subscriptions WHERE room_id=$1 AND user_id=$2",
+            body.room_id, partner
+        )
+
+    if sub_row:
+        sub = json.loads(sub_row["subscription"])
+        payload = {"title": "💌 message", "body": content[:80]}
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, _send_push_sync, sub, payload)
+        except WebPushException:
+            pass
+
+    return {"ok": True}
+
+
+@app.get("/api/room/{room_id}/messages")
+async def get_messages(room_id: str, pin: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", room_id)
+        if not room or room["pin"] != pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
+        rows = await conn.fetch(
+            "SELECT sender_id, content, created_at FROM messages WHERE room_id=$1 ORDER BY created_at ASC",
+            room_id
+        )
+    return {"messages": [
+        {"sender": r["sender_id"], "content": r["content"], "ts": r["created_at"].isoformat()}
+        for r in rows
+    ]}
 
 
 @app.post("/api/ping")

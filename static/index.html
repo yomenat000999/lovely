@@ -266,6 +266,142 @@
     border-radius: 10px;
     padding: 10px 14px;
   }
+
+  /* ── Message section ── */
+  #msg-section {
+    width: 100%;
+    max-width: 340px;
+    background: var(--card);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  #msg-lock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 20px;
+  }
+
+  #msg-lock-icon { font-size: 28px; opacity: 0.5; }
+
+  #msg-lock-text {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  #msg-progress-bar {
+    width: 100%;
+    height: 4px;
+    background: #2a2a40;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  #msg-progress-fill {
+    height: 100%;
+    background: var(--heart);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+
+  #msg-unlocked {
+    display: none;
+    flex-direction: column;
+  }
+
+  #msg-header {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    padding: 14px 16px 8px;
+    border-bottom: 1px solid #2a2a40;
+  }
+
+  #msg-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .msg-bubble {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.4;
+    word-break: break-word;
+  }
+
+  .msg-bubble.mine {
+    align-self: flex-end;
+    background: var(--heart);
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+
+  .msg-bubble.theirs {
+    align-self: flex-start;
+    background: #2a2a40;
+    color: var(--text);
+    border-bottom-left-radius: 4px;
+  }
+
+  #msg-compose {
+    display: flex;
+    gap: 8px;
+    padding: 10px 14px 14px;
+    border-top: 1px solid #2a2a40;
+    align-items: flex-end;
+  }
+
+  #msg-input {
+    flex: 1;
+    background: #111126;
+    border: 1px solid #2a2a40;
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 8px 12px;
+    resize: none;
+    min-height: 36px;
+    max-height: 80px;
+    font-family: inherit;
+    outline: none;
+    line-height: 1.4;
+  }
+
+  #msg-input:focus { border-color: var(--heart); }
+  #msg-input::placeholder { color: var(--muted); }
+
+  #msg-send {
+    background: var(--heart);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.2s;
+    height: 36px;
+  }
+
+  #msg-send:active { opacity: 0.75; }
+
+  @keyframes unlock-pop {
+    0%   { transform: scale(0.9); opacity: 0; }
+    60%  { transform: scale(1.04); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  #msg-section.just-unlocked { animation: unlock-pop 0.5s ease forwards; }
 </style>
 </head>
 <body>
@@ -315,6 +451,22 @@
   <button id="notify-btn">Enable notifications</button>
   <div id="no-push-banner">Your browser doesn't support push notifications — taps are still sent 💗</div>
 
+  <div id="msg-section">
+    <div id="msg-lock">
+      <div id="msg-lock-icon">💌</div>
+      <div id="msg-lock-text">leave a message — unlocks at 20 💗</div>
+      <div id="msg-progress-bar"><div id="msg-progress-fill"></div></div>
+    </div>
+    <div id="msg-unlocked">
+      <div id="msg-header">💌 messages</div>
+      <div id="msg-list"></div>
+      <div id="msg-compose">
+        <textarea id="msg-input" placeholder="write something..." rows="1"></textarea>
+        <button id="msg-send">send</button>
+      </div>
+    </div>
+  </div>
+
   <div id="share-box">
     <p>Share this link with your partner</p>
     <div class="link-row">
@@ -325,7 +477,7 @@
 </div>
 
 <script>
-let roomId, userId, userPin, isSubscribed = false, swReg = null;
+let roomId, userId, userPin, isSubscribed = false, swReg = null, msgUnlocked = false;
 
 // Permanent per-device ID — never changes across sessions
 let deviceId = localStorage.getItem('lp_device_id');
@@ -464,9 +616,60 @@ async function pollStatus() {
 
     // debug
     document.getElementById('dbg').textContent = `me:${userId} present:[${(r.slots||[]).join(',')}] count:${r.count}`;
+
+    // message unlock progress
+    const totalTaps = Object.values(r.taps || {}).reduce((a, b) => a + b, 0);
+    const pct = Math.min(totalTaps / 20 * 100, 100);
+    document.getElementById('msg-progress-fill').style.width = pct + '%';
+    document.getElementById('msg-lock-text').textContent =
+      totalTaps >= 20 ? 'unlocked 💌' : `leave a message — ${totalTaps}/20 💗`;
+
+    if (totalTaps >= 20 && !msgUnlocked) {
+      msgUnlocked = true;
+      const sec = document.getElementById('msg-section');
+      document.getElementById('msg-lock').style.display = 'none';
+      document.getElementById('msg-unlocked').style.display = 'flex';
+      sec.classList.add('just-unlocked');
+      setTimeout(() => sec.classList.remove('just-unlocked'), 600);
+      loadMessages();
+    } else if (msgUnlocked) {
+      loadMessages();
+    }
   } catch(e) {
     document.getElementById('dbg').textContent = 'poll error: ' + e;
   }
+}
+
+async function loadMessages() {
+  try {
+    const r = await fetch(`/api/room/${roomId}/messages?pin=${userPin}`).then(r => r.json());
+    const list = document.getElementById('msg-list');
+    const wasAtBottom = list.scrollHeight - list.scrollTop <= list.clientHeight + 10;
+    list.innerHTML = '';
+    for (const m of r.messages) {
+      const div = document.createElement('div');
+      div.className = 'msg-bubble ' + (m.sender === userId ? 'mine' : 'theirs');
+      div.textContent = m.content;
+      list.appendChild(div);
+    }
+    if (wasAtBottom || r.messages.length <= 1) list.scrollTop = list.scrollHeight;
+  } catch(e) {}
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msg-input');
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = '';
+  input.style.height = '';
+  try {
+    await fetch('/api/message', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room_id: roomId, user_id: userId, pin: userPin, content })
+    });
+    loadMessages();
+  } catch(e) {}
 }
 
 async function subscribeNotifications() {
@@ -529,6 +732,16 @@ document.getElementById('heart-btn').addEventListener('click', async () => {
 
 // Enable notifications button
 document.getElementById('notify-btn').addEventListener('click', subscribeNotifications);
+
+// Message send
+document.getElementById('msg-send').addEventListener('click', sendMessage);
+document.getElementById('msg-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+});
+document.getElementById('msg-input').addEventListener('input', function() {
+  this.style.height = '';
+  this.style.height = Math.min(this.scrollHeight, 80) + 'px';
+});
 
 // Copy button
 document.getElementById('copy-btn').addEventListener('click', () => {
