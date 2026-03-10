@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>💗</title>
+<style>
+  :root {
+    --bg: #0d0d1a;
+    --heart: #ff4d6d;
+    --heart-glow: rgba(255,77,109,0.35);
+    --text: #e8d5e0;
+    --muted: #6b5d65;
+    --connected: #4ade80;
+    --card: #1a1a2e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: var(--text);
+    padding: 24px;
+    gap: 32px;
+  }
+
+  #status {
+    font-size: 14px;
+    color: var(--muted);
+    letter-spacing: 0.05em;
+    transition: color 0.4s;
+    height: 20px;
+  }
+
+  #heart-btn {
+    width: 150px;
+    height: 150px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+  }
+
+  #heart-btn svg {
+    width: 100%;
+    height: 100%;
+    fill: var(--heart);
+    filter: drop-shadow(0 0 24px var(--heart-glow));
+    transition: filter 0.3s;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.07); }
+  }
+
+  body.connected #heart-btn svg {
+    animation: pulse 2.2s ease-in-out infinite;
+    filter: drop-shadow(0 0 32px var(--heart-glow));
+  }
+
+  @keyframes tap-burst {
+    0%   { transform: scale(1); }
+    25%  { transform: scale(1.35); }
+    60%  { transform: scale(0.92); }
+    100% { transform: scale(1); }
+  }
+
+  #heart-btn.tapped svg {
+    animation: tap-burst 0.5s ease forwards !important;
+  }
+
+  #hint {
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  #share-box {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 16px 20px;
+    width: 100%;
+    max-width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  #share-box p {
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  #share-box .link-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  #room-link {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text);
+    background: #111126;
+    border: 1px solid #2a2a40;
+    border-radius: 8px;
+    padding: 8px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: default;
+    user-select: all;
+  }
+
+  #copy-btn {
+    background: var(--heart);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.2s;
+  }
+
+  #copy-btn:active { opacity: 0.75; }
+
+  #notify-btn {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid #2a2a40;
+    border-radius: 10px;
+    padding: 10px 20px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+    max-width: 240px;
+  }
+
+  #notify-btn:hover { border-color: var(--heart); color: var(--heart); }
+  #notify-btn:disabled { opacity: 0.5; cursor: default; border-color: var(--connected); color: var(--connected); }
+</style>
+</head>
+<body>
+
+<div id="status">connecting...</div>
+
+<button id="heart-btn" title="Tap to send love">
+  <svg viewBox="0 0 100 90" xmlns="http://www.w3.org/2000/svg">
+    <path d="M50 85 C50 85 5 55 5 28 C5 14 16 5 28 5 C37 5 45 10 50 18 C55 10 63 5 72 5 C84 5 95 14 95 28 C95 55 50 85 50 85Z"/>
+  </svg>
+</button>
+
+<div id="hint">tap to send 💗</div>
+
+<button id="notify-btn">Enable notifications</button>
+
+<div id="share-box">
+  <p>Share this link with your partner</p>
+  <div class="link-row">
+    <div id="room-link"></div>
+    <button id="copy-btn">Copy</button>
+  </div>
+</div>
+
+<script>
+let roomId, userId, isSubscribed = false, swReg = null;
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = window.atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) output[i] = raw.charCodeAt(i);
+  return output;
+}
+
+function genRoomId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({length: 6}, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/room/' + roomId).then(r => r.json());
+    const both = r.count >= 2;
+    document.body.classList.toggle('connected', both);
+    const el = document.getElementById('status');
+    el.textContent = both ? 'Connected ✓' : 'Waiting for partner...';
+    el.style.color = both ? 'var(--connected)' : 'var(--muted)';
+  } catch(e) {}
+}
+
+async function subscribeNotifications() {
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+    alert('Push notifications are not supported in this browser.\nTry Chrome or Safari 16.4+.');
+    return false;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') {
+    alert('Please allow notifications to receive pings.');
+    return false;
+  }
+  try {
+    const reg = swReg || await navigator.serviceWorker.ready;
+    const vapidKey = await fetch('/api/vapid-public-key').then(r => r.text());
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidKey)
+    });
+    await fetch('/api/subscribe', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room_id: roomId, user_id: userId, subscription: sub.toJSON() })
+    });
+    isSubscribed = true;
+    const btn = document.getElementById('notify-btn');
+    btn.textContent = 'Notifications on ✓';
+    btn.disabled = true;
+    return true;
+  } catch(e) {
+    alert('Could not enable notifications: ' + e.message);
+    return false;
+  }
+}
+
+async function init() {
+  const params = new URLSearchParams(window.location.search);
+  roomId = params.get('room');
+  if (!roomId) {
+    window.location.replace('/?room=' + genRoomId());
+    return;
+  }
+
+  // Restore or assign user_id
+  const storageKey = 'lp_uid_' + roomId;
+  userId = localStorage.getItem(storageKey);
+  if (!userId) {
+    const r = await fetch('/api/room/' + roomId).then(r => r.json());
+    userId = r.slots.includes('a') ? 'b' : 'a';
+    localStorage.setItem(storageKey, userId);
+  }
+
+  // Set link
+  document.getElementById('room-link').textContent = window.location.href;
+
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    try {
+      swReg = await navigator.serviceWorker.register('/sw.js');
+    } catch(e) { console.warn('SW registration failed', e); }
+  }
+
+  // Poll status
+  pollStatus();
+  setInterval(pollStatus, 4000);
+}
+
+// Heart button
+document.getElementById('heart-btn').addEventListener('click', async () => {
+  if (!isSubscribed) {
+    const ok = await subscribeNotifications();
+    if (!ok) return;
+  }
+  const btn = document.getElementById('heart-btn');
+  btn.classList.remove('tapped');
+  void btn.offsetWidth;
+  btn.classList.add('tapped');
+  setTimeout(() => btn.classList.remove('tapped'), 600);
+
+  fetch('/api/ping', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ room_id: roomId, user_id: userId })
+  });
+});
+
+// Enable notifications button
+document.getElementById('notify-btn').addEventListener('click', subscribeNotifications);
+
+// Copy button
+document.getElementById('copy-btn').addEventListener('click', () => {
+  navigator.clipboard.writeText(window.location.href).then(() => {
+    const btn = document.getElementById('copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+});
+
+init();
+</script>
+</body>
+</html>
