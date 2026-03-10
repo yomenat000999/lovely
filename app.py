@@ -333,6 +333,50 @@ async def get_messages(room_id: str, pin: str):
     ]}
 
 
+# ── Angry ─────────────────────────────────────────────────────────────────────
+
+class AngryBody(BaseModel):
+    room_id: str
+    user_id: str
+    pin: str
+    amount: int
+
+
+@app.post("/api/angry")
+async def angry(body: AngryBody):
+    if body.user_id not in ("a", "b"):
+        raise HTTPException(status_code=400, detail="invalid user_id")
+    if body.amount not in range(5, 55, 5):
+        raise HTTPException(status_code=400, detail="amount must be 5-50 in steps of 5")
+
+    partner = "b" if body.user_id == "a" else "a"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT pin FROM rooms WHERE room_id=$1", body.room_id)
+        if not room or room["pin"] != body.pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
+        await conn.execute(
+            """UPDATE pings SET count = GREATEST(count - $1, 0)
+               WHERE room_id=$2 AND user_id=$3""",
+            body.amount, body.room_id, partner
+        )
+        sub_row = await conn.fetchrow(
+            "SELECT subscription FROM subscriptions WHERE room_id=$1 AND user_id=$2",
+            body.room_id, partner
+        )
+
+    if sub_row:
+        sub = json.loads(sub_row["subscription"])
+        payload = {"title": "💢 they're upset", "body": f"{body.amount} 💗 taken away"}
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, _send_push_sync, sub, payload)
+        except WebPushException:
+            pass
+
+    return {"ok": True}
+
+
 @app.post("/api/ping")
 async def ping(body: PingBody):
     pool = await get_pool()

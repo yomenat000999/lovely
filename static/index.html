@@ -402,6 +402,160 @@
   }
 
   #msg-section.just-unlocked { animation: unlock-pop 0.5s ease forwards; }
+
+  /* ── Hamburger menu ── */
+  #menu-btn {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 22px;
+    cursor: pointer;
+    padding: 8px;
+    z-index: 100;
+    display: none;
+    line-height: 1;
+    border-radius: 8px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #menu-btn:active { color: var(--text); }
+
+  #menu-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+  }
+
+  #menu-drawer {
+    display: none;
+    position: fixed;
+    top: 50px;
+    left: 14px;
+    background: var(--card);
+    border: 1px solid #2a2a40;
+    border-radius: 12px;
+    padding: 6px;
+    z-index: 200;
+    min-width: 150px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+
+  .menu-item {
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 14px;
+    padding: 10px 14px;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 0.15s;
+    font-family: inherit;
+    display: block;
+  }
+  .menu-item:active { background: #2a2a40; }
+
+  /* ── Angry modal ── */
+  #angry-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 300;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  #angry-modal-overlay.open { display: flex; }
+
+  #angry-modal {
+    background: var(--card);
+    border-radius: 20px 20px 0 0;
+    padding: 24px 20px 36px;
+    width: 100%;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  #angry-modal-title { font-size: 16px; font-weight: 600; text-align: center; }
+  #angry-modal-sub { font-size: 12px; color: var(--muted); text-align: center; }
+
+  #angry-amounts {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+  }
+
+  .angry-amt {
+    background: #2a2a40;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 10px 4px;
+    cursor: pointer;
+    text-align: center;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .angry-amt:active { border-color: var(--heart); }
+  .angry-amt.sel { background: var(--heart); color: white; border-color: var(--heart); }
+
+  #angry-confirm {
+    background: var(--heart);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    transition: opacity 0.2s;
+  }
+  #angry-confirm:disabled { opacity: 0.4; cursor: default; }
+  #angry-confirm:not(:disabled):active { opacity: 0.8; }
+
+  #angry-cancel-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+    text-align: center;
+    font-family: inherit;
+    padding: 4px;
+  }
+
+  /* ── Angry alert ── */
+  #angry-alert {
+    display: none;
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e0505;
+    border: 1px solid var(--heart);
+    border-radius: 12px;
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--text);
+    z-index: 500;
+    text-align: center;
+    white-space: nowrap;
+    box-shadow: 0 4px 20px rgba(255,77,109,0.3);
+    animation: slide-down 0.3s ease forwards;
+  }
+
+  @keyframes slide-down {
+    from { top: -10px; opacity: 0; }
+    to   { top: 20px;  opacity: 1; }
+  }
 </style>
 </head>
 <body>
@@ -433,6 +587,29 @@
   </div>
   <button id="pin-submit" disabled>Confirm</button>
 </div>
+
+<!-- Hamburger menu button (fixed, shown only on main screen) -->
+<button id="menu-btn">☰</button>
+
+<!-- Menu drawer -->
+<div id="menu-overlay"></div>
+<div id="menu-drawer">
+  <button class="menu-item" id="angry-open-btn">💢 生气</button>
+</div>
+
+<!-- Angry picker modal -->
+<div id="angry-modal-overlay">
+  <div id="angry-modal">
+    <div id="angry-modal-title">💢 生气</div>
+    <div id="angry-modal-sub">选择要扣除对方多少颗心</div>
+    <div id="angry-amounts"></div>
+    <button id="angry-confirm" disabled>确认</button>
+    <button id="angry-cancel-btn">取消</button>
+  </div>
+</div>
+
+<!-- Angry alert (shown when partner deducts your hearts) -->
+<div id="angry-alert"></div>
 
 <!-- Main screen -->
 <div id="main-screen">
@@ -478,6 +655,7 @@
 
 <script>
 let roomId, userId, userPin, isSubscribed = false, swReg = null, msgUnlocked = false;
+let prevMyTaps = null, selectedAngryAmount = 0;
 
 // Permanent per-device ID — never changes across sessions
 let deviceId = localStorage.getItem('lp_device_id');
@@ -535,6 +713,7 @@ function pushSupported() {
 function showMain() {
   document.getElementById('pin-screen').style.display = 'none';
   document.getElementById('main-screen').style.display = 'flex';
+  document.getElementById('menu-btn').style.display = 'block';
 }
 
 // ── PIN flow ──────────────────────────────────────────────────────────────────
@@ -619,6 +798,13 @@ async function pollStatus() {
 
     // message unlock progress — based on MY own taps reaching 100
     const myTaps = (r.taps && r.taps[userId]) || 0;
+
+    // Detect angry deduction (my taps went down)
+    if (prevMyTaps !== null && myTaps < prevMyTaps) {
+      showAngryAlert(prevMyTaps - myTaps);
+    }
+    prevMyTaps = myTaps;
+
     const pct = Math.min(myTaps / 100 * 100, 100);
     document.getElementById('msg-progress-fill').style.width = pct + '%';
     document.getElementById('msg-lock-text').textContent =
@@ -632,6 +818,11 @@ async function pollStatus() {
       sec.classList.add('just-unlocked');
       setTimeout(() => sec.classList.remove('just-unlocked'), 600);
       loadMessages();
+    } else if (myTaps < 100 && msgUnlocked) {
+      // Re-lock when hearts fall below 100
+      msgUnlocked = false;
+      document.getElementById('msg-lock').style.display = '';
+      document.getElementById('msg-unlocked').style.display = 'none';
     } else if (msgUnlocked) {
       loadMessages();
     }
@@ -762,6 +953,80 @@ document.getElementById('copy-btn').addEventListener('click', () => {
     setTimeout(() => btn.textContent = 'Copy', 1500);
   });
 });
+
+// ── Menu ──────────────────────────────────────────────────────────────────────
+let menuOpen = false;
+
+function openMenu() {
+  menuOpen = true;
+  document.getElementById('menu-drawer').style.display = 'block';
+  document.getElementById('menu-overlay').style.display = 'block';
+}
+
+function closeMenu() {
+  menuOpen = false;
+  document.getElementById('menu-drawer').style.display = 'none';
+  document.getElementById('menu-overlay').style.display = 'none';
+}
+
+document.getElementById('menu-btn').addEventListener('click', () => {
+  menuOpen ? closeMenu() : openMenu();
+});
+document.getElementById('menu-overlay').addEventListener('click', closeMenu);
+
+// ── Angry ─────────────────────────────────────────────────────────────────────
+// Build amount buttons 5, 10, ..., 50
+const angryAmountsEl = document.getElementById('angry-amounts');
+for (let i = 5; i <= 50; i += 5) {
+  const btn = document.createElement('button');
+  btn.className = 'angry-amt';
+  btn.textContent = i;
+  btn.dataset.amount = i;
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.angry-amt').forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+    selectedAngryAmount = i;
+    document.getElementById('angry-confirm').disabled = false;
+  });
+  angryAmountsEl.appendChild(btn);
+}
+
+document.getElementById('angry-open-btn').addEventListener('click', () => {
+  closeMenu();
+  selectedAngryAmount = 0;
+  document.querySelectorAll('.angry-amt').forEach(b => b.classList.remove('sel'));
+  document.getElementById('angry-confirm').disabled = true;
+  document.getElementById('angry-modal-overlay').classList.add('open');
+});
+
+document.getElementById('angry-cancel-btn').addEventListener('click', () => {
+  document.getElementById('angry-modal-overlay').classList.remove('open');
+});
+
+document.getElementById('angry-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('angry-modal-overlay'))
+    document.getElementById('angry-modal-overlay').classList.remove('open');
+});
+
+document.getElementById('angry-confirm').addEventListener('click', async () => {
+  if (!selectedAngryAmount) return;
+  document.getElementById('angry-modal-overlay').classList.remove('open');
+  try {
+    await fetch('/api/angry', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ room_id: roomId, user_id: userId, pin: userPin, amount: selectedAngryAmount })
+    });
+  } catch(e) {}
+});
+
+function showAngryAlert(amount) {
+  const el = document.getElementById('angry-alert');
+  el.textContent = `💢 they're upset — ${amount} 💗 taken away`;
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
